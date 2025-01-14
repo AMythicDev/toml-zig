@@ -4,7 +4,7 @@ const Allocator = std.testing.allocator;
 
 const MAX_FIELD_COUNT: u8 = 255;
 
-pub fn tomlize(obj: anytype, writer: anytype) !void {
+pub fn tomlize(allocator: std.mem.Allocator, obj: anytype, writer: anytype) !void {
     const ttype = @TypeOf(obj);
     const tinfo = @typeInfo(ttype);
     if (!std.mem.eql(u8, @tagName(tinfo), "Struct")) @panic("non struct type given to serialize");
@@ -13,12 +13,12 @@ pub fn tomlize(obj: anytype, writer: anytype) !void {
     comptime var i: u8 = 0;
     inline while (i < fields.len) {
         const field = fields.buffer[i];
-        try serialize_field(obj, field, writer);
+        try serialize_field(allocator, obj, field, writer);
         i += 1;
     }
 }
 
-fn serialize_field(obj: anytype, field: std.builtin.Type.StructField, writer: anytype) !void {
+fn serialize_field(allocator: std.mem.Allocator, obj: anytype, field: std.builtin.Type.StructField, writer: anytype) !void {
     try writer.print("{s} = ", .{field.name});
     switch (@typeInfo(field.type)) {
         .Int => try writer.print("{d}", .{@field(obj, field.name)}),
@@ -29,6 +29,29 @@ fn serialize_field(obj: anytype, field: std.builtin.Type.StructField, writer: an
                 try writer.print("false", .{});
         },
         .Float => try writer.print("{d}", .{@field(obj, field.name)}),
+        .Pointer => {
+            var esc_string = std.ArrayList(u8).init(allocator);
+            defer esc_string.deinit();
+            const string = @field(obj, field.name);
+
+            var curr_pos: usize = 0;
+            while (curr_pos <= string.len) {
+                const new_pos = std.mem.indexOfAnyPos(u8, string, curr_pos, &.{ '\\', '\"' }) orelse string.len;
+
+                if (new_pos > curr_pos) {
+                    try esc_string.appendSlice(string[curr_pos..new_pos]);
+                    try esc_string.append('\\');
+                    if (new_pos != string.len) try esc_string.append(string[new_pos]);
+                    curr_pos = new_pos + 1;
+                }
+            }
+
+            const pointer_type = @typeInfo(field.type);
+            if (pointer_type.Pointer.child == u8 and pointer_type.Pointer.size == .Slice) {
+                try writer.print("\"{s}\"", .{esc_string.items});
+            }
+        },
+        .Array => {},
         else => {},
     }
     _ = try writer.write("\n");
@@ -57,7 +80,7 @@ test "basic test" {
 
     const t = TestStruct{
         .field1 = 1024,
-        .field2 = "hello world",
+        .field2 = "hello \" \\ \" world",
         .field3 = false,
         .field4 = 3.14,
     };
@@ -65,6 +88,6 @@ test "basic test" {
     var buf: [1024]u8 = undefined;
     var stream = std.io.fixedBufferStream(&buf);
     var writer = stream.writer();
-    try tomlize(t, &writer);
+    try tomlize(Allocator, t, &writer);
     std.debug.print("\n{s}", .{buf});
 }

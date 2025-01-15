@@ -30,24 +30,23 @@ fn serialize_field(allocator: std.mem.Allocator, obj: anytype, field: std.builti
         },
         .Float => try writer.print("{d}", .{@field(obj, field.name)}),
         .Pointer => {
-            var esc_string = std.ArrayList(u8).init(allocator);
-            defer esc_string.deinit();
-            const string = @field(obj, field.name);
-
-            var curr_pos: usize = 0;
-            while (curr_pos <= string.len) {
-                const new_pos = std.mem.indexOfAnyPos(u8, string, curr_pos, &.{ '\\', '\"' }) orelse string.len;
-
-                if (new_pos > curr_pos) {
-                    try esc_string.appendSlice(string[curr_pos..new_pos]);
-                    try esc_string.append('\\');
-                    if (new_pos != string.len) try esc_string.append(string[new_pos]);
-                    curr_pos = new_pos + 1;
-                }
-            }
-
             const pointer_type = @typeInfo(field.type);
             if (pointer_type.Pointer.child == u8 and pointer_type.Pointer.size == .Slice) {
+                var esc_string = std.ArrayList(u8).init(allocator);
+                defer esc_string.deinit();
+                const string = @field(obj, field.name);
+
+                var curr_pos: usize = 0;
+                while (curr_pos <= string.len) {
+                    const new_pos = std.mem.indexOfAnyPos(u8, string, curr_pos, &.{ '\\', '\"' }) orelse string.len;
+
+                    if (new_pos >= curr_pos) {
+                        try esc_string.appendSlice(string[curr_pos..new_pos]);
+                        try esc_string.append('\\');
+                        if (new_pos != string.len) try esc_string.append(string[new_pos]);
+                        curr_pos = new_pos + 1;
+                    }
+                }
                 try writer.print("\"{s}\"", .{esc_string.items});
             }
         },
@@ -80,7 +79,7 @@ test "basic test" {
 
     const t = TestStruct{
         .field1 = 1024,
-        .field2 = "hello \" \\ \" world",
+        .field2 = "hello \" \\\" \" world",
         .field3 = false,
         .field4 = 3.14,
     };
